@@ -1,0 +1,19 @@
+{
+  "name": "小目标存钱本",
+  "short_name": "存钱本",
+  "description": "一个记录收入、支出、存款明细和目标进度的轻量小工具。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fffaf2",
+  "theme_color": "#fffaf2",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

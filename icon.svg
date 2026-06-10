@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#fff4df"/>
+  <circle cx="160" cy="148" r="58" fill="#8fc9f0"/>
+  <circle cx="352" cy="158" r="72" fill="#78c6a3"/>
+  <path d="M112 318c42-72 88-108 138-108 49 0 79 38 116 38 24 0 43-16 58-35 13-16 39-6 38 15-3 94-80 172-202 172-76 0-128-24-154-48-11-10-2-25 6-34z" fill="#2da879"/>
+  <path d="M145 326c34 21 72 31 115 31 54 0 99-16 134-49" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round"/>
+  <text x="256" y="455" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="700" fill="#263238">存</text>
+</svg>
