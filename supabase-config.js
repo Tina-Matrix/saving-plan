@@ -1,4 +1,4 @@
 window.SAVING_SUPABASE = {
-  url: "PASTE_SUPABASE_PROJECT_URL_HERE",
-  anonKey: "PASTE_SUPABASE_ANON_KEY_HERE"
+  url: "https://djxwijiaoeygiyxmzeky.supabase.co",
+  anonKey: "sb_publishable_qslHhkzK1iFTmSN55VlAIQ_pHq0hZE4"
 };
