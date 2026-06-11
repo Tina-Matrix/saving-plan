@@ -201,6 +201,13 @@
     .view { display: none; }
     .view.active { display: block; }
 
+    .hidden { display: none !important; }
+
+    body.auth-locked .view,
+    body.auth-locked .tabs {
+      display: none;
+    }
+
     h2 {
       margin: 0 0 12px;
       font-size: 18px;
@@ -438,10 +445,6 @@
       gap: 12px;
     }
 
-    .auth-panel.hidden {
-      display: none;
-    }
-
     .auth-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -491,7 +494,7 @@
     }
   </style>
 </head>
-<body>
+<body class="auth-locked">
   <main class="app">
     <section class="hero">
       <p class="eyebrow">小目标存钱本</p>
@@ -762,6 +765,7 @@
 
     function updateAuthUi() {
       const configured = supabaseConfigured();
+      document.body.classList.toggle("auth-locked", !currentUser);
       if (!configured) {
         setSyncStatus("待配置", "warn");
         el("authHint").textContent = "还没有填写 Supabase 项目地址和匿名密钥。配置后才能注册、登录和云端同步。";
