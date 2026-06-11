@@ -1,5 +1,5 @@
 const CACHE_NAME = "saving-planner-v1";
-const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
+const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg", "./supabase-config.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

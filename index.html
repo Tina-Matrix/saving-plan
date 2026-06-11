@@ -433,6 +433,34 @@
       vertical-align: -1px;
     }
 
+    .auth-panel {
+      display: grid;
+      gap: 12px;
+    }
+
+    .auth-panel.hidden {
+      display: none;
+    }
+
+    .auth-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .auth-user {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .sync-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
     .toast {
       position: fixed;
       left: 50%;
@@ -469,6 +497,31 @@
       <p class="eyebrow">小目标存钱本</p>
       <h1>把远方，拆成这个月的一步。</h1>
       <p class="subtitle" id="warmLine">先设定目标，再记录每个月的努力。钱慢慢攒，生活也要好好过。</p>
+    </section>
+
+    <section class="panel auth-panel" id="authPanel">
+      <div class="row">
+        <h2>账号同步</h2>
+        <span class="pill warn" id="syncStatus">待登录</span>
+      </div>
+      <div id="authGuest">
+        <p class="hint" id="authHint">用邮箱登录后，目标、月记录和存款明细会保存到云端，并且每个人只能看到自己的数据。</p>
+        <div class="form-grid">
+          <label class="full">邮箱<input type="email" id="authEmail" autocomplete="email" placeholder="name@example.com"></label>
+          <label class="full">密码<input type="password" id="authPassword" autocomplete="current-password" placeholder="至少 6 位"></label>
+        </div>
+        <div class="auth-actions">
+          <button class="btn primary" type="button" id="loginBtn">登录</button>
+          <button class="btn secondary" type="button" id="signupBtn">注册</button>
+        </div>
+      </div>
+      <div class="auth-user hidden" id="authUser">
+        <div>
+          <strong id="userEmail">已登录</strong>
+          <div class="sync-note" id="syncNote">云端同步已开启</div>
+        </div>
+        <button class="mini-btn" type="button" id="logoutBtn">退出</button>
+      </div>
     </section>
 
     <section class="view active" id="view-home">
@@ -615,6 +668,8 @@
   </nav>
   <div class="toast" id="toast"></div>
 
+  <script src="./supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     const STORAGE_KEY = "gentle-saving-planner-v1";
     const today = new Date();
@@ -622,6 +677,9 @@
 
     const state = loadState();
     const el = (id) => document.getElementById(id);
+    let supabaseClient = null;
+    let currentUser = null;
+    let cloudReady = false;
     const money = (value) => new Intl.NumberFormat("zh-CN", {
       style: "currency",
       currency: "CNY",
@@ -685,6 +743,188 @@
 
     function saveState() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function supabaseConfigured() {
+      const config = window.SAVING_SUPABASE || {};
+      return Boolean(
+        config.url &&
+        config.anonKey &&
+        !String(config.url).includes("PASTE_") &&
+        !String(config.anonKey).includes("PASTE_")
+      );
+    }
+
+    function setSyncStatus(text, tone = "warn") {
+      el("syncStatus").textContent = text;
+      el("syncStatus").className = `pill ${tone === "ok" ? "" : tone === "bad" ? "rose" : "warn"}`;
+    }
+
+    function updateAuthUi() {
+      const configured = supabaseConfigured();
+      if (!configured) {
+        setSyncStatus("待配置", "warn");
+        el("authHint").textContent = "还没有填写 Supabase 项目地址和匿名密钥。配置后才能注册、登录和云端同步。";
+      }
+      el("authGuest").classList.toggle("hidden", Boolean(currentUser));
+      el("authUser").classList.toggle("hidden", !currentUser);
+      if (currentUser) {
+        el("userEmail").textContent = currentUser.email || "已登录";
+        el("syncNote").textContent = cloudReady ? "云端同步已开启" : "正在准备云端同步";
+        setSyncStatus(cloudReady ? "已同步" : "同步中", cloudReady ? "ok" : "warn");
+      }
+    }
+
+    async function initSupabase() {
+      updateAuthUi();
+      if (!supabaseConfigured() || !window.supabase) return;
+      const config = window.SAVING_SUPABASE;
+      supabaseClient = window.supabase.createClient(config.url, config.anonKey);
+      const { data } = await supabaseClient.auth.getSession();
+      currentUser = data.session?.user || null;
+      if (currentUser) await loadCloudData();
+      supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+        currentUser = session?.user || null;
+        cloudReady = false;
+        if (currentUser) await loadCloudData();
+        updateAuthUi();
+        render();
+      });
+      updateAuthUi();
+    }
+
+    async function signUp() {
+      if (!supabaseClient) return toast("请先配置 Supabase");
+      const email = el("authEmail").value.trim();
+      const password = el("authPassword").value;
+      if (!email || password.length < 6) return toast("请输入邮箱和至少 6 位密码");
+      const { error } = await supabaseClient.auth.signUp({ email, password });
+      if (error) return toast(error.message);
+      toast("注册成功，请按邮件提示确认后登录");
+    }
+
+    async function signIn() {
+      if (!supabaseClient) return toast("请先配置 Supabase");
+      const email = el("authEmail").value.trim();
+      const password = el("authPassword").value;
+      if (!email || !password) return toast("请输入邮箱和密码");
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) return toast(error.message);
+      toast("登录成功，正在同步");
+    }
+
+    async function signOut() {
+      if (!supabaseClient) return;
+      await supabaseClient.auth.signOut();
+      currentUser = null;
+      cloudReady = false;
+      updateAuthUi();
+      toast("已退出登录");
+    }
+
+    function cloudRun(task) {
+      if (!supabaseClient || !currentUser) return;
+      task().then(() => {
+        cloudReady = true;
+        updateAuthUi();
+      }).catch((error) => {
+        console.error(error);
+        setSyncStatus("同步失败", "bad");
+      });
+    }
+
+    function settingsRow() {
+      return {
+        user_id: currentUser.id,
+        base_income: Number(state.settings.baseIncome || 0),
+        base_expense: Number(state.settings.baseExpense || 0),
+        initial_savings: Number(state.settings.initialSavings || 0),
+        short_goal: Number(state.settings.shortGoal || 0),
+        short_target_month: state.settings.shortTargetMonth || null,
+        long_goal: Number(state.settings.longGoal || 0),
+        long_target_month: state.settings.longTargetMonth || null
+      };
+    }
+
+    function monthRow(item) {
+      return {
+        user_id: currentUser.id,
+        month: item.month,
+        income: Number(item.income || 0),
+        expense: Number(item.expense || 0),
+        note: item.note || ""
+      };
+    }
+
+    function depositRow(item) {
+      return {
+        id: String(item.id || Date.now()),
+        user_id: currentUser.id,
+        date: item.date,
+        amount: Number(item.amount || 0),
+        type: item.type || "",
+        rate: Number(item.rate || 0),
+        term: Number(item.term || 0),
+        term_unit: item.termUnit || "year",
+        interest: Number(item.interest || 0),
+        due: item.due || null,
+        note: item.note || ""
+      };
+    }
+
+    async function syncAllCloud() {
+      if (!currentUser) return;
+      await supabaseClient.from("saving_settings").upsert(settingsRow());
+      if (state.months.length) await supabaseClient.from("monthly_records").upsert(state.months.map(monthRow));
+      if (state.deposits.length) await supabaseClient.from("deposit_records").upsert(state.deposits.map(depositRow));
+    }
+
+    async function loadCloudData() {
+      if (!currentUser) return;
+      setSyncStatus("同步中", "warn");
+      const settingsResult = await supabaseClient.from("saving_settings").select("*").eq("user_id", currentUser.id).maybeSingle();
+      if (settingsResult.error) throw settingsResult.error;
+      const monthsResult = await supabaseClient.from("monthly_records").select("*").order("month", { ascending: true });
+      if (monthsResult.error) throw monthsResult.error;
+      const depositsResult = await supabaseClient.from("deposit_records").select("*").order("date", { ascending: true });
+      if (depositsResult.error) throw depositsResult.error;
+
+      if (!settingsResult.data && !monthsResult.data?.length && !depositsResult.data?.length) {
+        await syncAllCloud();
+      } else {
+        if (settingsResult.data) {
+          state.settings = {
+            baseIncome: Number(settingsResult.data.base_income || 0),
+            baseExpense: Number(settingsResult.data.base_expense || 0),
+            initialSavings: Number(settingsResult.data.initial_savings || 0),
+            shortGoal: Number(settingsResult.data.short_goal || 0),
+            shortTargetMonth: settingsResult.data.short_target_month || monthAfter(thisMonth, 12),
+            longGoal: Number(settingsResult.data.long_goal || 0),
+            longTargetMonth: settingsResult.data.long_target_month || monthAfter(thisMonth, 60)
+          };
+        }
+        state.months = (monthsResult.data || []).map((item) => ({
+          month: item.month,
+          income: Number(item.income || 0),
+          expense: Number(item.expense || 0),
+          note: item.note || ""
+        }));
+        state.deposits = (depositsResult.data || []).map((item) => ({
+          id: item.id,
+          date: item.date,
+          amount: Number(item.amount || 0),
+          type: item.type || "",
+          rate: Number(item.rate || 0),
+          term: Number(item.term || 0),
+          termUnit: item.term_unit || "year",
+          interest: Number(item.interest || 0),
+          due: item.due || "",
+          note: item.note || ""
+        }));
+        saveState();
+      }
+      cloudReady = true;
+      updateAuthUi();
     }
 
     function numberFrom(id) {
@@ -979,6 +1219,7 @@
         longTargetMonth: el("longTargetMonth").value || monthAfter(thisMonth, 60)
       };
       saveState();
+      cloudRun(syncAllCloud);
       render();
       toast("目标已保存");
     });
@@ -993,6 +1234,9 @@
       };
       state.months = state.months.filter((item) => item.month !== record.month).concat(record);
       saveState();
+      cloudRun(async () => {
+        await supabaseClient.from("monthly_records").upsert(monthRow(record));
+      });
       render();
       toast("本月记录已保存");
     });
@@ -1013,6 +1257,9 @@
       if (deleteMonth) {
         state.months = state.months.filter((row) => row.month !== deleteMonth);
         saveState();
+        cloudRun(async () => {
+          await supabaseClient.from("monthly_records").delete().eq("user_id", currentUser.id).eq("month", deleteMonth);
+        });
         render();
         toast("已删除这条月记录");
       }
@@ -1021,7 +1268,7 @@
     el("depositForm").addEventListener("submit", (event) => {
       event.preventDefault();
       estimateDeposit();
-      const editingId = Number(el("depositForm").dataset.editingId || 0);
+      const editingId = el("depositForm").dataset.editingId || "";
       const item = {
         id: editingId || Date.now(),
         date: el("depositDate").value,
@@ -1034,11 +1281,14 @@
         due: el("depositDue").value,
         note: el("depositNote").value.trim()
       };
-      state.deposits = state.deposits.filter((row) => Number(row.id) !== Number(item.id)).concat(item);
+      state.deposits = state.deposits.filter((row) => String(row.id) !== String(item.id)).concat(item);
       event.target.reset();
       delete el("depositForm").dataset.editingId;
       el("depositDate").value = new Date().toISOString().slice(0, 10);
       saveState();
+      cloudRun(async () => {
+        await supabaseClient.from("deposit_records").upsert(depositRow(item));
+      });
       render();
       toast("存款明细已加入");
     });
@@ -1047,7 +1297,7 @@
       const editId = event.target.dataset.editDeposit;
       const deleteId = event.target.dataset.deleteDeposit;
       if (editId) {
-        const item = state.deposits.find((row) => Number(row.id) === Number(editId));
+        const item = state.deposits.find((row) => String(row.id) === String(editId));
         if (!item) return;
         el("depositForm").dataset.editingId = item.id;
         el("depositDate").value = item.date || "";
@@ -1063,8 +1313,11 @@
         toast("已填入表单，可以修改后保存");
       }
       if (deleteId) {
-        state.deposits = state.deposits.filter((row) => Number(row.id) !== Number(deleteId));
+        state.deposits = state.deposits.filter((row) => String(row.id) !== String(deleteId));
         saveState();
+        cloudRun(async () => {
+          await supabaseClient.from("deposit_records").delete().eq("user_id", currentUser.id).eq("id", String(deleteId));
+        });
         render();
         toast("已删除这条明细");
       }
@@ -1095,6 +1348,9 @@
     });
 
     el("exportCsv").addEventListener("click", exportCsv);
+    el("loginBtn").addEventListener("click", signIn);
+    el("signupBtn").addEventListener("click", signUp);
+    el("logoutBtn").addEventListener("click", signOut);
 
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -1108,6 +1364,7 @@
     updateMonthSavedView();
     el("depositDate").value = new Date().toISOString().slice(0, 10);
     render();
+    initSupabase();
   </script>
 </body>
 </html>
