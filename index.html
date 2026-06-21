@@ -672,7 +672,7 @@
   </nav>
   <div class="toast" id="toast"></div>
 
-  <script src="./supabase-config.js?v=7"></script>
+  <script src="./supabase-config.js?v=8"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     const STORAGE_KEY = "gentle-saving-planner-v1";
@@ -779,9 +779,52 @@
       if (/signup.*disabled|signups.*disabled/i.test(message)) return "Supabase 还没有开启邮箱注册。请到 Authentication > Providers > Email 打开 Email 登录。";
       if (/email.*not.*confirmed|confirm/i.test(message)) return "邮箱还没有确认。请先打开确认邮件里的链接，再回来登录。";
       if (/invalid.*api|jwt|apikey|key/i.test(message)) return "Supabase key 不可用。请确认 supabase-config.js 使用的是 anon public / publishable key，不是 service_role。";
-      if (/fetch|network|failed to fetch|load failed/i.test(message)) return "网络连接 Supabase 失败。请检查网页能否访问 Supabase，或稍后重试。";
+      if (/fetch|network|failed to fetch|load failed/i.test(message)) return "连接 Supabase 失败。请检查 supabase-config.js 里的 Project URL 是否从 Supabase 的 Project Settings > API Keys 页面复制，项目是否已暂停或删除。";
       if (/already registered|already exists|user.*exists|already been registered/i.test(message)) return "这个邮箱可能已经注册过了。请直接登录；如果提示未确认，请先打开邮箱确认链接。";
       return message || "认证失败，请稍后重试。";
+    }
+
+    function supabaseBaseUrl() {
+      const config = window.SAVING_SUPABASE || {};
+      return String(config.url || "").replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+    }
+
+    async function authFetch(path, body) {
+      const config = window.SAVING_SUPABASE || {};
+      const response = await fetch(`${supabaseBaseUrl()}${path}`, {
+        method: "POST",
+        headers: {
+          apikey: config.anonKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = { message: text };
+      }
+      if (!response.ok) {
+        throw new Error(data?.msg || data?.message || `${response.status} ${response.statusText}`);
+      }
+      return data;
+    }
+
+    async function directSignUp(email, password) {
+      return authFetch("/auth/v1/signup", { email, password });
+    }
+
+    async function directSignIn(email, password) {
+      const data = await authFetch("/auth/v1/token?grant_type=password", { email, password });
+      if (data?.access_token && data?.refresh_token && supabaseClient) {
+        await supabaseClient.auth.setSession({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token
+        });
+      }
+      return data;
     }
 
     function updateAuthUi() {
@@ -837,14 +880,31 @@
       setAuthMessage("正在注册，请稍等...");
       el("signupBtn").disabled = true;
       const options = authRedirectUrl() ? { emailRedirectTo: authRedirectUrl() } : {};
-      const { data, error } = await supabaseClient.auth.signUp({ email, password, options });
+      let data = null;
+      let error = null;
+      try {
+        const result = await supabaseClient.auth.signUp({ email, password, options });
+        data = result.data;
+        error = result.error;
+        if (error && /fetch|network|failed to fetch|load failed/i.test(error.message || "")) {
+          data = await directSignUp(email, password);
+          error = null;
+        }
+      } catch (caught) {
+        try {
+          data = await directSignUp(email, password);
+          error = null;
+        } catch (fallbackError) {
+          error = fallbackError;
+        }
+      }
       el("signupBtn").disabled = false;
       if (error) {
         const text = friendlyAuthError(error);
         setAuthMessage(text, "bad");
         return toast(text);
       }
-      if (data.session) {
+      if (data.session || data.access_token) {
         setAuthMessage("注册成功，已自动登录。", "ok");
         toast("注册成功，已自动登录");
       } else {
@@ -860,7 +920,22 @@
       if (!email || !password) return toast("请输入邮箱和密码");
       setAuthMessage("正在登录，请稍等...");
       el("loginBtn").disabled = true;
-      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      let error = null;
+      try {
+        const result = await supabaseClient.auth.signInWithPassword({ email, password });
+        error = result.error;
+        if (error && /fetch|network|failed to fetch|load failed/i.test(error.message || "")) {
+          await directSignIn(email, password);
+          error = null;
+        }
+      } catch (caught) {
+        try {
+          await directSignIn(email, password);
+          error = null;
+        } catch (fallbackError) {
+          error = fallbackError;
+        }
+      }
       el("loginBtn").disabled = false;
       if (error) {
         const text = friendlyAuthError(error);
