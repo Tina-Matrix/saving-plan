@@ -517,6 +517,7 @@
           <button class="btn primary" type="button" id="loginBtn">登录</button>
           <button class="btn secondary" type="button" id="signupBtn">注册</button>
         </div>
+        <p class="sync-note" id="authMessage"></p>
       </div>
       <div class="auth-user hidden" id="authUser">
         <div>
@@ -671,7 +672,7 @@
   </nav>
   <div class="toast" id="toast"></div>
 
-  <script src="./supabase-config.js?v=5"></script>
+  <script src="./supabase-config.js?v=7"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     const STORAGE_KEY = "gentle-saving-planner-v1";
@@ -763,6 +764,26 @@
       el("syncStatus").className = `pill ${tone === "ok" ? "" : tone === "bad" ? "rose" : "warn"}`;
     }
 
+    function setAuthMessage(text, tone = "warn") {
+      el("authMessage").textContent = text || "";
+      el("authMessage").style.color = tone === "bad" ? "#b85c68" : tone === "ok" ? "#26956d" : "#71808a";
+    }
+
+    function authRedirectUrl() {
+      const config = window.SAVING_SUPABASE || {};
+      return config.redirectUrl || undefined;
+    }
+
+    function friendlyAuthError(error) {
+      const message = error?.message || String(error || "");
+      if (/signup.*disabled|signups.*disabled/i.test(message)) return "Supabase 还没有开启邮箱注册。请到 Authentication > Providers > Email 打开 Email 登录。";
+      if (/email.*not.*confirmed|confirm/i.test(message)) return "邮箱还没有确认。请先打开确认邮件里的链接，再回来登录。";
+      if (/invalid.*api|jwt|apikey|key/i.test(message)) return "Supabase key 不可用。请确认 supabase-config.js 使用的是 anon public / publishable key，不是 service_role。";
+      if (/fetch|network|failed to fetch|load failed/i.test(message)) return "网络连接 Supabase 失败。请检查网页能否访问 Supabase，或稍后重试。";
+      if (/already registered|already exists|user.*exists|already been registered/i.test(message)) return "这个邮箱可能已经注册过了。请直接登录；如果提示未确认，请先打开邮箱确认链接。";
+      return message || "认证失败，请稍后重试。";
+    }
+
     function updateAuthUi() {
       const configured = supabaseConfigured();
       document.body.classList.toggle("auth-locked", !currentUser);
@@ -781,19 +802,30 @@
 
     async function initSupabase() {
       updateAuthUi();
-      if (!supabaseConfigured() || !window.supabase) return;
+      if (!supabaseConfigured()) return;
+      if (!window.supabase) {
+        setSyncStatus("加载失败", "bad");
+        setAuthMessage("Supabase 登录组件没有加载成功。请检查网络是否能访问 jsdelivr，或稍后刷新页面。", "bad");
+        return;
+      }
       const config = window.SAVING_SUPABASE;
-      supabaseClient = window.supabase.createClient(config.url, config.anonKey);
-      const { data } = await supabaseClient.auth.getSession();
-      currentUser = data.session?.user || null;
-      if (currentUser) await loadCloudData();
-      supabaseClient.auth.onAuthStateChange(async (_event, session) => {
-        currentUser = session?.user || null;
-        cloudReady = false;
+      try {
+        supabaseClient = window.supabase.createClient(config.url.replace(/\/rest\/v1\/?$/, ""), config.anonKey);
+        const { data, error } = await supabaseClient.auth.getSession();
+        if (error) throw error;
+        currentUser = data.session?.user || null;
         if (currentUser) await loadCloudData();
-        updateAuthUi();
-        render();
-      });
+        supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+          currentUser = session?.user || null;
+          cloudReady = false;
+          if (currentUser) await loadCloudData();
+          updateAuthUi();
+          render();
+        });
+      } catch (error) {
+        setSyncStatus("配置异常", "bad");
+        setAuthMessage(friendlyAuthError(error), "bad");
+      }
       updateAuthUi();
     }
 
@@ -802,9 +834,23 @@
       const email = el("authEmail").value.trim();
       const password = el("authPassword").value;
       if (!email || password.length < 6) return toast("请输入邮箱和至少 6 位密码");
-      const { error } = await supabaseClient.auth.signUp({ email, password });
-      if (error) return toast(error.message);
-      toast("注册成功，请按邮件提示确认后登录");
+      setAuthMessage("正在注册，请稍等...");
+      el("signupBtn").disabled = true;
+      const options = authRedirectUrl() ? { emailRedirectTo: authRedirectUrl() } : {};
+      const { data, error } = await supabaseClient.auth.signUp({ email, password, options });
+      el("signupBtn").disabled = false;
+      if (error) {
+        const text = friendlyAuthError(error);
+        setAuthMessage(text, "bad");
+        return toast(text);
+      }
+      if (data.session) {
+        setAuthMessage("注册成功，已自动登录。", "ok");
+        toast("注册成功，已自动登录");
+      } else {
+        setAuthMessage("注册成功。请先打开邮箱里的确认链接，再回来登录。", "ok");
+        toast("注册成功，请确认邮箱");
+      }
     }
 
     async function signIn() {
@@ -812,8 +858,16 @@
       const email = el("authEmail").value.trim();
       const password = el("authPassword").value;
       if (!email || !password) return toast("请输入邮箱和密码");
+      setAuthMessage("正在登录，请稍等...");
+      el("loginBtn").disabled = true;
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-      if (error) return toast(error.message);
+      el("loginBtn").disabled = false;
+      if (error) {
+        const text = friendlyAuthError(error);
+        setAuthMessage(text, "bad");
+        return toast(text);
+      }
+      setAuthMessage("登录成功，正在同步数据。", "ok");
       toast("登录成功，正在同步");
     }
 
